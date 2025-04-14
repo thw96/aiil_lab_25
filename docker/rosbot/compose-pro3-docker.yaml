@@ -1,0 +1,184 @@
+
+# Note, this file depends on the common compose:
+#     docker/rosbot/compose-common.yaml
+
+x-common-config:
+  &common-config
+  restart: unless-stopped
+  network_mode: host
+  ipc: host
+  volumes:
+    - /home/husarion/aiil_workspace/config/dds/rmit-fastrtps-dds.xml:/rmit-fastrtps-dds.xml
+  # user: ${DOCKER_UID:-1000}:${DOCKER_GID:-1000} # *
+
+
+services:
+
+  # Switch to using microros bringup through husarion rosbot packages rather than mircoros agent package
+  #   There is a potential bug in the microros agent package that prevents the hardware relaunching
+  microros:
+    # image: husarion/micro-xrce-agent:v2.4.1
+    image: husarion/rosbot:humble-0.14.0-20250131
+    container_name: microros
+    extends:
+      file: /home/husarion/aiil_workspace/docker/rosbot/compose-common.yaml
+      service: microros
+    <<: *common-config
+    profiles: ["hardware", "all"]
+    # profiles: ["microros"]
+    devices:
+      # - ${SERIAL_PORT:?err}
+      - /dev/ttyAMA0
+      - /dev/gpiochip0
+      - /dev/gpiochip1
+      - /dev/gpiochip2
+      - /dev/gpiochip3
+      - /dev/gpiochip4
+      - /dev/gpiochip5
+    environment:
+      - SERIAL_PORT=/dev/ttyAMA0
+      # - FASTRTPS_DEFAULT_PROFILES_FILE            # ***
+      - XRCE_DOMAIN_ID_OVERRIDE=${ROS_DOMAIN_ID:-}  # ***
+    command: >
+      ros2 launch rosbot_bringup microros.launch.py
+      serial_port:=/dev/ttyAMA0
+# Micro ros bringup package
+#command: MicroXRCEAgent serial -D /dev/ttyAMA0 serial -b 576000
+
+  rosbot:
+    # image: husarion/rosbot:humble-0.13.1-20240207
+    # image: husarion/rosbot:humble-0.11.1-20231229
+    image: husarion/rosbot:humble-0.14.0-20250131
+    container_name: rosbot
+    extends:
+      file: /home/husarion/aiil_workspace/docker/rosbot/compose-common.yaml
+      service: rosbot
+    <<: *common-config
+    profiles: ["hardware", "all"]
+    volumes:
+      - /home/husarion/aiil_workspace/husarion_workspace/pro3/rosbot_description/meshes:/ros2_ws/install/rosbot_description/share/rosbot_description/meshes
+      - /home/husarion/aiil_workspace/husarion_workspace/pro3/rosbot_description/urdf:/ros2_ws/install/rosbot_description/share/rosbot_description/urdf
+      - /home/husarion/aiil_workspace/husarion_workspace/pro3/ros_components_description/meshes:/ros2_ws/install/ros_components_description/share/ros_components_description/meshes
+      - /home/husarion/aiil_workspace/husarion_workspace/pro3/ros_components_description/urdf:/ros2_ws/install/ros_components_description/share/ros_components_description/urdf
+    devices:
+      - /dev/ttyAMA0
+      - /dev/gpiochip0
+      - /dev/gpiochip1
+      - /dev/gpiochip2
+      - /dev/gpiochip3
+      - /dev/gpiochip4
+      - /dev/gpiochip5
+    environment:
+      - SERIAL_PORT=/dev/ttyAMA0
+    command: >
+      ros2 launch rosbot_bringup bringup.launch.py
+        microros:=False
+        serial_port:=/dev/ttyAMA0
+
+  rplidar:
+    image: husarion/rplidar:humble
+    container_name: rplidar
+    extends:
+      file: /home/husarion/aiil_workspace/docker/rosbot/compose-common.yaml
+      service: rplidar
+    <<: *common-config
+    profiles: ["sensors", "all"]
+    devices:
+      - /dev/ttyUSB0
+    command: >
+        ros2 launch sllidar_ros2 sllidar_s2_launch.py
+        serial_baudrate:=${RPLIDAR_BAUDRATE:-1000000}
+        serial_port:=/dev/ttyUSB0
+
+  oakd:
+    # image: husarion/depthai:humble-v2.10.3 <- has a udev rule issue
+    image: husarion/depthai:humble-2.8.1
+    # image: rmit/aiil_workspace
+    container_name: oakd
+    extends:
+      file: /home/husarion/aiil_workspace/docker/rosbot/compose-common.yaml
+      service: oakd
+    <<: *common-config
+    profiles: ["sensors", "all"]
+    privileged: true
+    volumes:
+      - /dev/bus/usb:/dev/bus/usb
+      - /home/husarion/aiil_workspace/humble_workspace/src/aiil_oakd/config/oakd.yaml:/oakd.yaml
+      - /home/husarion/aiil_workspace/humble_workspace/src/aiil_oakd/launch/camera.launch.py:/ros2_ws/install/depthai_ros_driver/share/depthai_ros_driver/launch/camera.launch.py
+      # - /home/husarion/aiil_workspace/humble_workspace/src/aiil_oakd/launch/camera.launch.py:/opt/ros/humble/share/depthai_ros_driver/launch/camera.launch.py
+    device_cgroup_rules:
+      - 'c 189:* rmw'
+    command: >
+      ros2 launch depthai_ros_driver camera.launch.py
+        camera_model:=OAK-D-LITE
+        parent_frame:=camera_mount_link
+        params_file:=/oakd.yaml
+        pointcloud.enable:=false
+#camera.launch.py
+#rgbd_pcl.launch.py 
+ 
+  slam_toolbox:
+    # image: husarion/slam-toolbox:humble
+    image: rmit/aiil_workspace
+    container_name: slam_toolbox
+    <<: *common-config
+    extends:
+      file: /home/husarion/aiil_workspace/docker/rosbot/compose-common.yaml
+      service: slam_toolbox
+    profiles: ["sensors", "all"]
+    volumes:
+      - /home/husarion/aiil_workspace/humble_workspace/src/aiil_rosbot_demo/config/slam.yaml:/slam_params/slam.yaml
+    command: ros2 launch slam_toolbox online_sync_launch.py slam_params_file:=/slam_params/slam.yaml use_sim_time:=false
+
+  nav2:
+    # image: husarion/navigation2:humble
+    image: rmit/aiil_workspace
+    container_name: nav2
+    extends:
+      file: /home/husarion/aiil_workspace/docker/rosbot/compose-common.yaml
+      service: slam_toolbox
+    <<: *common-config
+    profiles: ["sensors", "all"]
+    volumes:
+      - /home/husarion/aiil_workspace/humble_workspace/src/aiil_rosbot_demo/config/navigation_pro3.yaml:/nav2_params/params.yaml
+      - /home/husarion/aiil_workspace/humble_workspace/src/aiil_rosbot_demo/config/aiil_simple_navigate.xml:/nav2_params/nav_bt.xml
+    command: ros2 launch nav2_bringup navigation_launch.py params_file:=/nav2_params/params.yaml use_sim_time:=false
+
+  # RMIT workspace is not launched, just make a bash container
+  rmit_aiilworkspace:
+    image: rmit/aiil_workspace
+    container_name: rmit_aiilworkspace
+    extends:
+      file: /home/husarion/aiil_workspace/docker/rosbot/compose-common.yaml
+      service: rmit_aiilworkspace
+    <<: *common-config
+    profiles: ["aiil"]
+    volumes:
+      - /home/husarion/aiil_workspace/humble_workspace:/ros2_ws
+    # command: ros2 launch rosbot_bringup bringup.launch.py
+
+  # This container is specifically for initial setup of the ROSBot3 to flash firmware
+  firmware_flash:
+    image: husarion/rosbot:humble-0.14.0-20250131
+    # image: husarion/rosbot-xl:humble-0.10.0-20240216
+    container_name: firmware_flash
+    extends:
+      file: /home/husarion/aiil_workspace/docker/rosbot/compose-common.yaml
+      service: rosbot
+    <<: *common-config
+    devices:
+      # - ${SERIAL_PORT:?err}
+      - /dev/ttyAMA0
+      - /dev/gpiochip0
+      - /dev/gpiochip1
+      - /dev/gpiochip2
+      - /dev/gpiochip3
+      - /dev/gpiochip4
+      - /dev/gpiochip5
+    environment:
+      - SERIAL_PORT=/dev/ttyAMA0
+    profiles: ["firmware"]
+
+volumes:
+  dummy_volume_fastdds:
+  dummy_volume_cyclonedds:
