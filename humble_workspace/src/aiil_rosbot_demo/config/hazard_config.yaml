@@ -1,0 +1,3 @@
+hazards:
+  start_marker_id: 101  # ID of the start sign marker
+  enable_start_subscription: true
